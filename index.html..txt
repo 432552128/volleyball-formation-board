@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バレーボール フォーメーションボード</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF & 画像保存ライブラリ -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .aspect-court { aspect-ratio: 1 / 2; }
+        .player-piece {
+            width: 65px; height: 65px; border-radius: 8px; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; font-weight: bold; color: white;
+            position: absolute; cursor: grab; user-select: none; box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            border: 2px solid rgba(255,255,255,0.8); touch-action: none; padding: 4px;
+            text-align: center; line-height: 1.2; transition: box-shadow 0.2s;
+        }
+        .player-piece .player-number { font-size: 1.25rem; min-height: 1.5rem; }
+        .player-piece .player-name { font-size: 0.75rem; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .player-piece .player-position {
+            font-size: 0.75rem; background-color: rgba(0,0,0,0.2); padding: 0 4px;
+            border-radius: 4px; margin-top: 2px; min-height: 1rem;
+            transition: background-color 0.2s, padding 0.2s;
+        }
+        .player-piece .player-position.empty { background-color: transparent; padding: 0; }
+        .player-piece:active { cursor: grabbing; z-index: 1000; }
+        
+        .volleyball {
+            width: 35px; height: 35px; border-radius: 50%; background: white;
+            position: absolute; cursor: grab; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            touch-action: none; z-index: 999; border: 2px solid #333; overflow: hidden;
+        }
+        .volleyball::before, .volleyball::after {
+            content: ''; position: absolute; width: 150%; height: 60%;
+            background: #0051a3; border-bottom: 2px solid #333;
+            border-radius: 0 0 50% 50%; left: -25%; top: -20%; transform: rotate(-35deg);
+        }
+        .volleyball::after {
+            background: #ffd700; border-bottom: none; border-top: 2px solid #333;
+            border-radius: 50% 50% 0 0; top: auto; bottom: -20%;
+        }
+        .volleyball:active { cursor: grabbing; }
+
+        #trash-can { transition: transform 0.2s, color 0.2s; }
+        #trash-can.over { transform: scale(1.2); color: #ef4444; }
+
+        .btn-add {
+            color: white; font-weight: bold; padding-top: 0.5rem; padding-bottom: 0.5rem;
+            border-radius: 0.5rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            font-size: 0.75rem; transition: transform 0.2s;
+        }
+        .btn-add:hover { transform: scale(1.05); }
+
+        .serving-order-cell {
+            transition: background-color 0.2s;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-lg mx-auto">
+        <!-- 画像保存されるエリア -->
+        <div id="capture-area" class="bg-gray-100 p-4 rounded-lg">
+            <h1 class="text-2xl font-bold text-center text-gray-800 mb-4">バレーボール フォーメーションボード</h1>
+            
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                    <h3 class="font-bold text-center text-sm mb-2 text-blue-600">味方チーム サーブ順</h3>
+                    <div id="home-serving-order" class="space-y-1"></div>
+                </div>
+                <div id="opponent-serve-order-container">
+                    <h3 class="font-bold text-center text-sm mb-2 text-red-600">相手チーム サーブ順</h3>
+                    <div id="opponent-serving-order" class="space-y-1"></div>
+                </div>
+            </div>
+
+            <div id="opponent-bench-container" class="mb-4">
+                <div id="opponent-bench-area" class="p-2 border-2 border-dashed border-gray-400 rounded-lg min-h-[80px] relative">
+                    <span class="absolute -top-3 left-2 bg-gray-100 px-2 text-sm font-bold text-gray-500">相手控え</span>
+                </div>
+            </div>
+
+            <div id="court-container" class="bg-blue-200 border-4 border-gray-900 rounded-lg shadow-xl aspect-court relative flex flex-col overflow-hidden"></div>
+            
+            <div id="home-bench-container" class="mt-4">
+                 <div id="home-bench-area" class="p-2 border-2 border-dashed border-gray-400 rounded-lg min-h-[80px] relative">
+                    <span class="absolute -top-3 left-2 bg-gray-100 px-2 text-sm font-bold text-gray-500">味方控え</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 操作ボタンエリア (保存されない) -->
+        <div id="controls-container" class="p-4">
+            <div class="grid grid-cols-4 gap-2 mb-4">
+                <button id="add-home-player" class="btn-add bg-blue-500 hover:bg-blue-600">味方選手</button>
+                <button id="add-home-libero" class="btn-add bg-green-500 hover:bg-green-600">味方リベロ</button>
+                <button id="add-opponent-player" class="btn-add bg-red-500 hover:bg-red-600">相手選手</button>
+                <button id="add-opponent-libero" class="btn-add bg-orange-500 hover:bg-orange-600">相手リベロ</button>
+                <button id="add-ball" class="col-span-2 btn-add bg-yellow-400 hover:bg-yellow-500 text-gray-800 text-sm">ボール追加</button>
+                <button id="save-pdf" class="col-span-2 btn-add bg-gray-700 hover:bg-gray-800 text-sm">画像を保存</button>
+            </div>
+            <div class="flex justify-end space-x-2 mb-4">
+                <button id="toggle-benches" class="text-xs bg-gray-200 text-gray-600 px-3 py-1 rounded-full">控え選手 ON/OFF</button>
+                <button id="toggle-opponent-serve" class="text-xs bg-gray-200 text-gray-600 px-3 py-1 rounded-full">相手サーブ順 ON/OFF</button>
+            </div>
+            <div id="trash-area" class="flex justify-center items-center h-16">
+                <svg id="trash-can" class="h-8 w-8 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            </div>
+        </div>
+    </div>
+
+    <div id="player-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg p-6 w-11/12 max-w-sm shadow-xl">
+            <h2 class="text-xl font-bold mb-4">選手情報</h2>
+            <div><label for="player-number" class="block text-sm font-medium text-gray-700">背番号</label><input type="number" id="player-number" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"></div>
+            <div class="mt-4"><label for="player-name" class="block text-sm font-medium text-gray-700">名前</label><input type="text" id="player-name" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"></div>
+            <div class="mt-4"><label for="player-position" class="block text-sm font-medium text-gray-700">ポジション</label><input type="text" id="player-position" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"></div>
+            <div class="mt-6 flex justify-end space-x-3"><button id="cancel-button" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg">キャンセル</button><button id="save-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg">保存</button></div>
+        </div>
+    </div>
+
+    <div id="serve-order-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg p-6 w-11/12 max-w-sm shadow-xl">
+            <h2 id="serve-order-modal-title" class="text-xl font-bold mb-4">サーブ順の選手</h2>
+            <div>
+                <label for="serve-order-input" class="block text-sm font-medium text-gray-700">背番号または名前</label>
+                <input type="text" id="serve-order-input" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+            <div class="mt-6 flex justify-end space-x-3"><button id="serve-order-cancel-button" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg">キャンセル</button><button id="serve-order-save-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg">保存</button></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const { jsPDF } = window.jspdf;
+            const getEl = (id) => document.getElementById(id);
+
+            const courtContainer = getEl('court-container');
+            const trashCan = getEl('trash-can');
+            const playerModal = getEl('player-modal');
+            const saveButton = getEl('save-button');
+            const cancelButton = getEl('cancel-button');
+            const playerNumberInput = getEl('player-number');
+            const playerNameInput = getEl('player-name');
+            const playerPositionInput = getEl('player-position');
+            const captureArea = getEl('capture-area');
+            const homeServingOrderContainer = getEl('home-serving-order');
+            const opponentServingOrderContainer = getEl('opponent-serving-order');
+            const opponentServeOrderContainer = getEl('opponent-serve-order-container');
+            const serveOrderModal = getEl('serve-order-modal');
+            const serveOrderModalTitle = getEl('serve-order-modal-title');
+            const serveOrderInput = getEl('serve-order-input');
+            const serveOrderSaveButton = getEl('serve-order-save-button');
+            const serveOrderCancelButton = getEl('serve-order-cancel-button');
+            const homeBenchContainer = getEl('home-bench-container');
+            const opponentBenchContainer = getEl('opponent-bench-container');
+
+            let state = {
+                pieces: new Map(),
+                nextPieceId: 0,
+                activePiece: null,
+                servingOrder: {
+                    home: Array(6).fill(null),
+                    opponent: Array(6).fill(null)
+                }
+            };
+
+            courtContainer.innerHTML = `
+                <div class="w-full h-1/2 border-b-2 border-gray-900 relative"><div class="absolute bottom-0 w-full h-1/3 border-t-2 border-gray-900"></div></div>
+                <div class="w-full h-1/2 relative"><div class="absolute top-0 w-full h-1/3 border-b-2 border-gray-900"></div></div>
+                <div class="absolute top-1/2 left-0 w-full border-t-4 border-dashed border-gray-700 -translate-y-1/2"></div>
+                <div class="absolute top-1/2 left-[-12px] w-2 h-16 bg-red-500 border-2 border-white rounded-t-full -translate-y-full z-10"></div>
+                <div class="absolute top-1/2 left-[-12px] w-2 h-16 bg-white border-2 border-white rounded-b-full z-10"></div>
+                <div class="absolute top-1/2 right-[-12px] w-2 h-16 bg-red-500 border-2 border-white rounded-t-full -translate-y-full z-10"></div>
+                <div class="absolute top-1/2 right-[-12px] w-2 h-16 bg-white border-2 border-white rounded-b-full z-10"></div>
+            `;
+
+            function renderServingOrder() {
+                const createCell = (team, pos, value) => `
+                    <div class="flex items-center text-xs">
+                        <div class="w-6 h-6 flex items-center justify-center font-bold text-gray-500">${pos + 1}</div>
+                        <div data-team="${team}" data-pos="${pos}" class="serving-order-cell w-full h-6 flex items-center justify-center rounded bg-gray-200 text-gray-700 font-bold cursor-pointer">
+                            ${value || ''}
+                        </div>
+                    </div>
+                `;
+                homeServingOrderContainer.innerHTML = state.servingOrder.home.map((val, i) => createCell('home', i, val)).join('');
+                opponentServingOrderContainer.innerHTML = state.servingOrder.opponent.map((val, i) => createCell('opponent', i, val)).join('');
+                
+                document.querySelectorAll('.serving-order-cell').forEach(cell => {
+                    cell.addEventListener('click', handleServeOrderClick);
+                });
+            }
+
+            function handleServeOrderClick(e) {
+                const cell = e.currentTarget;
+                const team = cell.dataset.team;
+                const pos = parseInt(cell.dataset.pos, 10);
+                const currentValue = state.servingOrder[team][pos];
+
+                serveOrderModal.dataset.team = team;
+                serveOrderModal.dataset.pos = pos;
+
+                serveOrderModalTitle.textContent = `${team === 'home' ? '味方' : '相手'}チーム ${pos + 1}番`;
+                serveOrderInput.value = currentValue || '';
+                serveOrderModal.classList.remove('hidden');
+                serveOrderInput.focus();
+            }
+
+            function createPiece(type, team, isLibero) {
+                const piece = document.createElement('div');
+                const id = state.nextPieceId++;
+                piece.dataset.id = id;
+                piece.dataset.team = team;
+                state.pieces.set(id, piece);
+
+                if (type === 'player') {
+                    piece.classList.add('player-piece');
+                    piece.innerHTML = `<span class="player-number">&nbsp;</span><span class="player-name">Player</span><span class="player-position empty">&nbsp;</span>`;
+                    if (team === 'home') piece.classList.add(isLibero ? 'bg-green-500' : 'bg-blue-500');
+                    else piece.classList.add(isLibero ? 'bg-orange-500' : 'bg-red-500');
+                } else { piece.classList.add('volleyball'); }
+                
+                const courtRect = courtContainer.getBoundingClientRect();
+                const scrollX = window.scrollX, scrollY = window.scrollY;
+                let topPercent = (type === 'player') ? (team === 'home' ? 0.6 : 0.2) : 0.48;
+                const initialTop = courtRect.top + scrollY + courtRect.height * topPercent;
+                const initialLeft = courtRect.left + scrollX + courtRect.width * 0.45;
+                
+                piece.style.position = 'absolute';
+                piece.style.top = `${initialTop}px`;
+                piece.style.left = `${initialLeft}px`;
+                document.body.appendChild(piece);
+                makeDraggable(piece);
+
+                if (type === 'player') {
+                    piece.addEventListener('click', (e) => {
+                        if (piece.isBeingDragged) return;
+                        state.activePiece = piece;
+                        playerNumberInput.value = piece.dataset.number || '';
+                        playerNameInput.value = piece.dataset.name || '';
+                        playerPositionInput.value = piece.dataset.position || '';
+                        playerModal.classList.remove('hidden');
+                    });
+                }
+            }
+
+            function makeDraggable(element) {
+                let isDragging = false, offsetX, offsetY;
+                const id = parseInt(element.dataset.id, 10);
+
+                const startDrag = (e) => {
+                    isDragging = true;
+                    element.isBeingDragged = false;
+                    const event = e.type.includes('touch') ? e.touches[0] : e;
+                    offsetX = event.clientX - element.getBoundingClientRect().left;
+                    offsetY = event.clientY - element.getBoundingClientRect().top;
+                    element.style.cursor = 'grabbing';
+                    element.style.zIndex = 1000;
+                    e.stopPropagation();
+                };
+
+                const drag = (e) => {
+                    if (!isDragging) return;
+                    element.isBeingDragged = true;
+                    e.preventDefault();
+                    const event = e.type.includes('touch') ? e.touches[0] : e;
+                    element.style.left = `${event.pageX - offsetX}px`;
+                    element.style.top = `${event.pageY - offsetY}px`;
+                    trashCan.classList.toggle('over', isOverlapping(element, trashCan));
+                };
+
+                const stopDrag = (e) => {
+                    if (!isDragging) return;
+                    isDragging = false;
+                    trashCan.classList.remove('over');
+                    element.style.cursor = 'grab';
+                    element.style.zIndex = element.classList.contains('volleyball') ? '999' : '';
+                    
+                    setTimeout(() => { element.isBeingDragged = false; }, 50);
+
+                    if (isOverlapping(element, trashCan)) {
+                        const team = element.dataset.team;
+                        const number = element.dataset.number;
+                        const name = element.dataset.name;
+                        if(team && (number || name)) {
+                            const order = state.servingOrder[team];
+                            const valueToFind = number || name;
+                            const index = order.indexOf(valueToFind);
+                            if(index > -1) {
+                                order[index] = null;
+                                renderServingOrder();
+                            }
+                        }
+                        element.remove();
+                        state.pieces.delete(id);
+                    }
+                };
+                
+                element.addEventListener('mousedown', startDrag);
+                element.addEventListener('touchstart', startDrag, { passive: true });
+                document.addEventListener('mousemove', drag);
+                document.addEventListener('touchmove', drag, { passive: false });
+                document.addEventListener('mouseup', stopDrag);
+                document.addEventListener('touchend', stopDrag);
+            }
+
+            getEl('add-home-player').addEventListener('click', () => createPiece('player', 'home', false));
+            getEl('add-home-libero').addEventListener('click', () => createPiece('player', 'home', true));
+            getEl('add-opponent-player').addEventListener('click', () => createPiece('player', 'opponent', false));
+            getEl('add-opponent-libero').addEventListener('click', () => createPiece('player', 'opponent', true));
+            getEl('add-ball').addEventListener('click', () => createPiece('ball'));
+            getEl('toggle-opponent-serve').addEventListener('click', () => {
+                opponentServeOrderContainer.classList.toggle('hidden');
+            });
+            getEl('toggle-benches').addEventListener('click', () => {
+                homeBenchContainer.classList.toggle('hidden');
+                opponentBenchContainer.classList.toggle('hidden');
+            });
+
+            saveButton.addEventListener('click', () => {
+                if (state.activePiece) {
+                    const oldNumber = state.activePiece.dataset.number;
+                    const oldName = state.activePiece.dataset.name;
+                    const newNumberStr = playerNumberInput.value;
+                    const newName = playerNameInput.value || 'No Name';
+                    const newNumber = newNumberStr.trim() === '' ? null : newNumberStr;
+                    const team = state.activePiece.dataset.team;
+
+                    if (team) {
+                        const order = state.servingOrder[team];
+                        const oldIdentifier = oldNumber || oldName;
+                        const index = order.indexOf(oldIdentifier);
+                        if (index > -1) {
+                            order[index] = newNumber || newName;
+                            renderServingOrder();
+                        }
+                    }
+
+                    state.activePiece.dataset.number = newNumber;
+                    state.activePiece.dataset.name = newName;
+                    state.activePiece.dataset.position = playerPositionInput.value;
+                    state.activePiece.querySelector('.player-number').innerHTML = newNumber || '&nbsp;';
+                    state.activePiece.querySelector('.player-name').textContent = newName;
+                    const posEl = state.activePiece.querySelector('.player-position');
+                    posEl.innerHTML = playerPositionInput.value || '&nbsp;';
+                    posEl.classList.toggle('empty', !playerPositionInput.value);
+                    playerModal.classList.add('hidden');
+                    state.activePiece = null;
+                }
+            });
+            cancelButton.addEventListener('click', () => playerModal.classList.add('hidden'));
+            
+            serveOrderSaveButton.addEventListener('click', () => {
+                const team = serveOrderModal.dataset.team;
+                const pos = parseInt(serveOrderModal.dataset.pos, 10);
+                const newValue = serveOrderInput.value.trim();
+
+                if (team && !isNaN(pos)) {
+                    state.servingOrder[team][pos] = newValue === '' ? null : newValue;
+                    renderServingOrder();
+                }
+                serveOrderModal.classList.add('hidden');
+            });
+
+            serveOrderCancelButton.addEventListener('click', () => serveOrderModal.classList.add('hidden'));
+            
+            const isOverlapping = (e1, e2) => {
+                const r1 = e1.getBoundingClientRect(), r2 = e2.getBoundingClientRect();
+                return !(r1.right < r2.left || r1.left > r2.right || r1.bottom < r2.top || r1.top > r2.bottom);
+            };
+            
+            getEl('save-pdf').addEventListener('click', async () => {
+                 const originalPositions = new Map();
+                 const captureRect = captureArea.getBoundingClientRect();
+                 
+                 document.querySelectorAll('.player-piece, .volleyball').forEach(piece => {
+                    originalPositions.set(piece, { top: piece.style.top, left: piece.style.left });
+                    const pieceRect = piece.getBoundingClientRect();
+                    piece.style.left = `${pieceRect.left - captureRect.left}px`;
+                    piece.style.top = `${pieceRect.top - captureRect.top}px`;
+                    captureArea.appendChild(piece);
+                 });
+
+                const canvas = await html2canvas(captureArea, { scale: 2, useCORS: true, backgroundColor: '#f3f4f6' });
+                const imgData = canvas.toDataURL('image/png');
+                const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: [canvas.width, canvas.height] });
+                pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+                pdf.save('volleyball-formation.pdf');
+
+                for (const [piece, pos] of originalPositions.entries()) {
+                    piece.style.top = pos.top;
+                    piece.style.left = pos.left;
+                    document.body.appendChild(piece);
+                }
+            });
+
+            renderServingOrder();
+        });
+    </script>
+</body>
+</html>
